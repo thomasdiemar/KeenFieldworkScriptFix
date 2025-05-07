@@ -60,6 +60,7 @@ internal class Program
 
         Print(dataList);
 
+        await GetDerives(dataList);
         //var wrappers = await GenerateWrappers(dataList);
 
         //Print(wrappers);
@@ -121,6 +122,7 @@ internal class Program
     {
         foreach (var data in dataList)
         {
+            if(data.Document.Name.ToString().Contains("Compress") || data.Document.Name.ToString().Contains("Minify")) continue;
             Print(data.Document.Name, data.MethodDeclarationSyntax);
         }
     }
@@ -249,21 +251,73 @@ internal class Program
                 var syntaxRoot = await document.GetSyntaxRootAsync();
                 if (syntaxRoot == null) continue;
                 var semanticModel = await document.GetSemanticModelAsync();
-                if (semanticModel == null) continue;
+                if (semanticModel == null) ;
 
                 var data = new Data { Document = document, MethodDeclarationSyntax = new List<MethodDeclarationSyntax>(), OverrideMethodDeclarationSyntax = new List<MethodDeclarationSyntax>() };
 
                 GetInterfaces(syntaxRoot, semanticModel, data);
                 GetAbstractClasses(syntaxRoot, semanticModel, data);
-                //GetOverrideClasses(syntaxRoot, semanticModel, data);
-                
+                GetOverrideClasses(syntaxRoot, semanticModel, data);
+
                 dataList.Add(data);
             }
         }
 
-
-
     }
+
+    static async Task GetDerives(List<Data> dataList)
+    {
+        foreach (var data in dataList)
+        {
+            var model = await data.Document.GetSemanticModelAsync();
+            if (model == null) continue;
+
+            foreach (var parent in data.MethodDeclarationSyntax)
+            {
+                var targetMethodSymbol = model.GetDeclaredSymbol(parent);
+                if (targetMethodSymbol == null) continue;
+
+                var declaringType = targetMethodSymbol.ContainingType;
+
+                foreach (var data2 in dataList)
+                {
+                    var model2 = await data2.Document.GetSemanticModelAsync();
+                    if (model2 == null) continue;
+
+                    foreach (var potentialoverride in data2.OverrideMethodDeclarationSyntax)
+                    {
+                        var classSymbol = model2.GetDeclaredSymbol(potentialoverride);
+                        if (classSymbol == null) continue;
+
+                        var classType = classSymbol.ContainingType;
+
+                        if (DerivesFromOrImplements(classType, declaringType))
+                        {
+                            if (classType.ToString().Contains("Compress") || classType.ToString().Contains("Minify")) continue;
+                            Console.WriteLine("DerivesFromOrImplements " + classType.ToString() + " " + declaringType.ToString() + "@" + potentialoverride.Identifier.ToString());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    static bool DerivesFromOrImplements(INamedTypeSymbol classSymbol, INamedTypeSymbol baseType)
+    {
+        // Base class check
+        var current = classSymbol.BaseType;
+        while (current != null)
+        {
+            if (SymbolEqualityComparer.Default.Equals(current, baseType))
+                return true;
+            current = current.BaseType;
+        }
+
+        // Interface check
+        return classSymbol.AllInterfaces.Any(i =>
+            SymbolEqualityComparer.Default.Equals(i, baseType));
+    }
+
 
     static void GetInterfaces(SyntaxNode syntaxRoot, SemanticModel semanticModel, Data data)
     {
@@ -322,7 +376,6 @@ internal class Program
     }
 
     
-
 
     static async Task<Dictionary<string, WrapperData>> GenerateWrappers(List<Data> dataList)
     {
